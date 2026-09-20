@@ -1,5 +1,5 @@
 import os
-
+import json
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
@@ -21,10 +21,39 @@ client = genai.Client(api_key=API_KEY) if API_KEY else None
 
 
 # =========================================
-# TEMPORARY PHYSICS NOTES
+# NOTES FILE
 # =========================================
 
-NOTES_TEXT = ""
+NOTES_FILE = "physics_notes.txt"
+
+
+def load_notes():
+
+    if not os.path.exists(NOTES_FILE):
+        return ""
+
+    try:
+        with open(
+            NOTES_FILE,
+            "r",
+            encoding="utf-8"
+        ) as f:
+
+            return f.read()
+
+    except Exception:
+        return ""
+
+
+def save_notes(text):
+
+    with open(
+        NOTES_FILE,
+        "w",
+        encoding="utf-8"
+    ) as f:
+
+        f.write(text)
 
 
 # =========================================
@@ -38,13 +67,11 @@ def home():
 
 
 # =========================================
-# UPLOAD PHYSICS NOTES
+# UPLOAD NOTES
 # =========================================
 
 @app.route("/upload-notes", methods=["POST"])
 def upload_notes():
-
-    global NOTES_TEXT
 
     if client is None:
 
@@ -96,22 +123,15 @@ IMPORTANT:
 1. Preserve Physics formulas accurately.
 2. Preserve definitions.
 3. Preserve laws and principles.
-4. Preserve important derivations.
+4. Preserve derivations.
 5. Preserve examples.
-6. Preserve numerical-solving methods.
-7. Preserve chapter/topic names.
+6. Preserve numerical solving methods.
+7. Preserve chapter and topic names.
 8. Preserve units.
-9. Preserve symbols such as:
-α β γ θ λ μ ρ π ω
-
-10. Preserve:
-fractions
-powers
-roots
-differentiation
-integration
-vectors
-trigonometry
+9. Preserve Physics symbols.
+10. Preserve fractions, powers, roots,
+differentiation, integration, vectors and
+trigonometry.
 
 Do NOT invent information.
 
@@ -132,7 +152,18 @@ Return only the structured Physics knowledge base.
         )
 
 
-        NOTES_TEXT = response.text
+        notes = response.text
+
+
+        if not notes:
+
+            return jsonify({
+                "error": "Gemini returned empty notes."
+            }), 500
+
+
+        # SAVE NOTES
+        save_notes(notes)
 
 
         return jsonify({
@@ -140,10 +171,10 @@ Return only the structured Physics knowledge base.
             "success": True,
 
             "message":
-            "Physics notes processed successfully.",
+            "Physics notes processed and saved successfully.",
 
             "characters":
-            len(NOTES_TEXT)
+            len(notes)
 
         })
 
@@ -156,8 +187,42 @@ Return only the structured Physics knowledge base.
 
 
 # =========================================
-# SOLVE PHYSICS QUESTION
-# TEXT + IMAGE
+# CHECK NOTES
+# =========================================
+
+@app.route("/notes-status", methods=["GET"])
+def notes_status():
+
+    notes = load_notes()
+
+
+    if not notes:
+
+        return jsonify({
+
+            "loaded": False,
+
+            "message":
+            "Physics notes are not loaded."
+
+        })
+
+
+    return jsonify({
+
+        "loaded": True,
+
+        "characters":
+        len(notes),
+
+        "message":
+        "Physics notes are available."
+
+    })
+
+
+# =========================================
+# SOLVE QUESTION
 # =========================================
 
 @app.route("/solve", methods=["POST"])
@@ -170,40 +235,14 @@ def solve():
         }), 500
 
 
-    # -------------------------------------
-    # GET QUESTION
-    # -------------------------------------
+    # =====================================
+    # READ NOTES FROM STORAGE
+    # =====================================
 
-    question = request.form.get(
-        "question",
-        ""
-    ).strip()
+    notes = load_notes()
 
 
-    # -------------------------------------
-    # GET IMAGE
-    # -------------------------------------
-
-    image = request.files.get("image")
-
-
-    # -------------------------------------
-    # CHECK QUESTION / IMAGE
-    # -------------------------------------
-
-    if not question and not image:
-
-        return jsonify({
-            "error":
-            "Please enter a question or upload an image."
-        }), 400
-
-
-    # -------------------------------------
-    # CHECK NOTES
-    # -------------------------------------
-
-    if not NOTES_TEXT:
+    if not notes:
 
         return jsonify({
 
@@ -214,10 +253,37 @@ def solve():
         }), 400
 
 
+    # =====================================
+    # GET QUESTION
+    # =====================================
+
+    question = request.form.get(
+        "question",
+        ""
+    ).strip()
+
+
+    # =====================================
+    # GET IMAGE
+    # =====================================
+
+    image = request.files.get("image")
+
+
+    if not question and not image:
+
+        return jsonify({
+
+            "error":
+            "Please enter a question or upload an image."
+
+        }), 400
+
+
     try:
 
         # =================================
-        # BASE PROMPT
+        # PROMPT
         # =================================
 
         prompt = f"""
@@ -225,50 +291,51 @@ You are a Physics AI tutor.
 
 The student has provided a Physics question.
 
-Student text question:
+Student text:
 
-{question if question else "No text question. Read the uploaded image."}
+{question if question else "No text. Read the uploaded image."}
 
 
-Below is the student's own Physics notes.
+================ PHYSICS NOTES ================
 
-================ NOTES ================
+{notes}
 
-{NOTES_TEXT}
-
-========================================
+=================================================
 
 
 STRICT RULES:
 
-1. Treat the supplied Physics notes as the PRIMARY SOURCE.
+1. Treat these Physics notes as the PRIMARY SOURCE.
 
-2. Find the relevant chapter, topic, concept and formula
-   from the notes.
+2. Find the relevant chapter, topic,
+concept and formula from the notes.
 
-3. Base the solution on the notes whenever the required
-   information is available.
+3. Base the answer on these notes whenever
+the required information is available.
 
-4. Follow the terminology and method used in the notes
-   whenever possible.
+4. Follow the terminology and method from
+the notes whenever possible.
 
-5. If the question is provided as an image, carefully read
-   the image including mathematical symbols, numbers,
-   diagrams and handwritten text.
+5. If an image is provided, carefully read:
+- numbers
+- equations
+- symbols
+- diagrams
+- handwritten text
 
-6. Do NOT invent formulas or facts.
+6. Do not invent formulas.
 
-7. If the required information is NOT present in the notes,
-   clearly say:
+7. If the required information is NOT present
+in the notes, clearly say:
 
 "यह जानकारी दिए गए notes में नहीं मिली।"
 
-8. You may perform calculations using formulas found
-   in the notes.
+8. You may perform calculations using formulas
+present in the notes.
 
 9. Explain the solution step-by-step.
 
-10. Use proper LaTeX for mathematics.
+10. Use proper LaTeX.
 
 Answer format:
 
@@ -289,46 +356,20 @@ Answer format:
 ### Final Answer
 
 ### Simple Explanation
-
-
-Use LaTeX like:
-
-$$
-v = u + at
-$$
-
-$$
-F = ma
-$$
-
-$$
-E = mc^2
-$$
-
-$$
-v = \\sqrt{{2gh}}
-$$
-
-For fractions:
-
-$$
-v = \\frac{{u+at}}{{1}}
-$$
 """
 
-
-        # =================================
-        # GEMINI CONTENT
-        # =================================
 
         contents = []
 
 
-        # Add image first if available
+        # =================================
+        # IMAGE
+        # =================================
 
         if image:
 
             image_bytes = image.read()
+
 
             if not image_bytes:
 
@@ -337,7 +378,10 @@ $$
                 }), 400
 
 
-            mime_type = image.mimetype or "image/jpeg"
+            mime_type = (
+                image.mimetype
+                or "image/jpeg"
+            )
 
 
             contents.append(
@@ -353,7 +397,9 @@ $$
             )
 
 
-        # Add text prompt
+        # =================================
+        # TEXT PROMPT
+        # =================================
 
         contents.append(prompt)
 
@@ -371,13 +417,10 @@ $$
         )
 
 
-        # =================================
-        # RETURN ANSWER
-        # =================================
-
         return jsonify({
 
-            "answer": response.text
+            "answer":
+            response.text
 
         })
 
@@ -386,7 +429,8 @@ $$
 
         return jsonify({
 
-            "error": str(e)
+            "error":
+            str(e)
 
         }), 500
 
