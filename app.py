@@ -1,30 +1,129 @@
 import os
+import io
+import base64
+
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from google import genai
+from google.genai import types
 
 app = Flask(__name__)
 CORS(app)
 
 API_KEY = os.environ.get("GEMINI_API_KEY")
 
-client = None
+client = genai.Client(api_key=API_KEY) if API_KEY else None
 
-if API_KEY:
-    client = genai.Client(api_key=API_KEY)
+# Temporary notes storage
+NOTES_TEXT = ""
 
 
 @app.route("/")
 def home():
-    return "Universal Physics AI Solver is Working!"
+    return "Physics Notes AI Backend is Working!"
 
+
+# =========================================
+# UPLOAD / BUILD NOTES
+# =========================================
+
+@app.route("/upload-notes", methods=["POST"])
+def upload_notes():
+
+    global NOTES_TEXT
+
+    if client is None:
+        return jsonify({
+            "error": "GEMINI_API_KEY is not configured."
+        }), 500
+
+    pdf = request.files.get("pdf")
+
+    if not pdf:
+        return jsonify({
+            "error": "PDF file is required."
+        }), 400
+
+    try:
+
+        pdf_bytes = pdf.read()
+
+        if not pdf_bytes:
+            return jsonify({
+                "error": "PDF is empty."
+            }), 400
+
+        # Send complete PDF to Gemini for extraction
+        response = client.models.generate_content(
+            model="gemini-3.6-flash",
+            contents=[
+                types.Part.from_bytes(
+                    data=pdf_bytes,
+                    mime_type="application/pdf"
+                ),
+                """
+You are processing a Physics teaching-notes PDF.
+
+Create a clean Physics knowledge base from this PDF.
+
+IMPORTANT:
+
+1. Preserve Physics formulas accurately.
+2. Preserve definitions.
+3. Preserve laws and principles.
+4. Preserve important derivations.
+5. Preserve examples.
+6. Preserve numerical-solving methods.
+7. Preserve chapter/topic names.
+8. Preserve units.
+9. Preserve symbols such as:
+   α β γ θ λ μ ρ π ω
+10. Preserve fractions, powers, roots,
+    differentiation and integration.
+
+Do NOT invent information.
+
+Organize the extracted knowledge as:
+
+CHAPTER
+TOPIC
+CONCEPT
+FORMULAS
+DEFINITIONS
+IMPORTANT POINTS
+SOLVING METHOD
+EXAMPLES
+
+Return only the structured Physics knowledge base.
+"""
+            ]
+        )
+
+        NOTES_TEXT = response.text
+
+        return jsonify({
+            "success": True,
+            "message": "Physics notes processed successfully.",
+            "characters": len(NOTES_TEXT)
+        })
+
+    except Exception as e:
+
+        return jsonify({
+            "error": str(e)
+        }), 500
+
+
+# =========================================
+# SOLVE QUESTION USING NOTES
+# =========================================
 
 @app.route("/solve", methods=["POST"])
 def solve():
 
     if client is None:
         return jsonify({
-            "error": "GEMINI_API_KEY is not configured in Render."
+            "error": "GEMINI_API_KEY is not configured."
         }), 500
 
     data = request.get_json(silent=True) or {}
@@ -36,132 +135,88 @@ def solve():
             "error": "Question is required."
         }), 400
 
-    prompt = f"""
-You are an expert Physics teacher.
+    if not NOTES_TEXT:
 
-You can solve Physics questions from:
+        return jsonify({
+            "error": "Physics notes are not loaded yet. Please upload/build your notes first."
+        }), 400
 
-Class 9
-Class 10
-Class 11
-Class 12
-JEE Main
-JEE Advanced
-NEET
+    try:
 
-The student can ask a question from ANY Physics chapter.
+        prompt = f"""
+You are a Physics AI tutor.
 
-Do NOT assume a fixed chapter.
+The student is asking:
 
-First automatically identify:
+{question}
 
-1. Chapter
-2. Topic
-3. Physics concept
+Below is the student's own Physics notes.
 
-Then solve the question.
+================ NOTES ================
+{NOTES_TEXT}
+========================================
 
-IMPORTANT TEACHING STYLE:
+STRICT RULES:
 
-- Explain in simple student-friendly language.
-- Avoid unnecessarily difficult English.
-- Do not skip important steps.
-- Do not invent missing information.
-- If information is missing, clearly say what is missing.
-- Always check units.
-- Check the final answer.
-- For numerical questions, show calculations step-by-step.
-- For conceptual questions, explain the concept with a simple example when useful.
+1. Treat the supplied notes as the PRIMARY SOURCE.
+2. Find the relevant chapter/topic/formula from the notes.
+3. Base the solution on the notes.
+4. Follow the terminology and method used in the notes when possible.
+5. Do NOT silently replace the notes with generic knowledge.
+6. If the required information is NOT present in the notes, clearly say:
 
-Use this structure when applicable:
+"यह जानकारी दिए गए notes में नहीं मिली।"
+
+7. You may use basic Physics reasoning to calculate or explain
+   something that follows directly from a formula in the notes.
+8. Do not invent formulas or facts.
+
+Answer format:
 
 ### Chapter
 ### Topic
+### Notes Concept
 ### Given
 ### Find
-### Concept
 ### Formula
 ### Solution
 ### Final Answer
 ### Simple Explanation
 
-MATHEMATICS:
+Use proper LaTeX for mathematics.
 
-Use LaTeX for mathematical expressions.
-
-Inline example:
-$v = u + at$
-
-Display equation example:
+Example:
 
 $$
 v = u + at
 $$
 
-Use proper LaTeX for:
+For fractions:
 
-Fractions:
 $$
-v = \\frac{{u+at}}{{1}}
+v = \frac{{u+at}}{{1}}
 $$
 
-Powers:
+For powers:
+
 $$
 E = mc^2
 $$
 
-Square roots:
-$$
-v = \\sqrt{{2gh}}
-$$
+For roots:
 
-Trigonometry:
 $$
-F_x = F\\cos\\theta
+v = \sqrt{{2gh}}
 $$
-
-Vectors:
-$$
-\\vec F = m\\vec a
-$$
-
-Differentiation:
-$$
-v = \\frac{{dx}}{{dt}}
-$$
-
-Integration:
-$$
-x = \\int v\\,dt
-$$
-
-GRAPHS:
-
-If a graph is important for understanding the question:
-
-- Explain what should be on the x-axis.
-- Explain what should be on the y-axis.
-- Explain the shape of the graph.
-- Give the mathematical relation represented by the graph.
-
-Do not invent experimental data.
-
-The student question is:
-
-{question}
 """
-
-    try:
 
         response = client.models.generate_content(
             model="gemini-3.6-flash",
             contents=prompt
         )
 
-        answer = response.text
-
         return jsonify({
-            "answer": answer
+            "answer": response.text
         })
 
     except Exception as e:
