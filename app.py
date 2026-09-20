@@ -6,13 +6,13 @@ from google import genai
 app = Flask(__name__)
 CORS(app)
 
-# Gemini client
-api_key = os.environ.get("GEMINI_API_KEY")
+# Gemini API
+API_KEY = os.environ.get("GEMINI_API_KEY")
 
-if not api_key:
-    client = None
-else:
-    client = genai.Client(api_key=api_key)
+client = None
+
+if API_KEY:
+    client = genai.Client(api_key=API_KEY)
 
 
 @app.route("/")
@@ -23,11 +23,13 @@ def home():
 @app.route("/solve", methods=["POST"])
 def solve():
 
+    # Check API key
     if client is None:
         return jsonify({
-            "error": "Gemini API key is not configured."
+            "error": "GEMINI_API_KEY is not configured in Render."
         }), 500
 
+    # Read request
     data = request.get_json(silent=True) or {}
 
     question = data.get("question", "").strip()
@@ -37,28 +39,48 @@ def solve():
             "error": "Question is required."
         }), 400
 
+    # Physics teacher prompt
     prompt = f"""
-You are a Physics teacher.
+You are an expert Physics teacher for Class 11, Class 12,
+JEE Main, JEE Advanced and NEET students.
 
-Solve the following Physics question clearly and step-by-step.
+Solve the following Physics question accurately.
 
-Question:
+QUESTION:
 {question}
 
-Rules:
-1. Identify the given quantities.
-2. Write the relevant Physics formula.
-3. Substitute the values.
-4. Show calculations.
-5. Give the final answer with correct unit.
-6. Keep the explanation easy for Class 11-12 / JEE-NEET students.
-7. Do not invent information that is not given.
+Follow these rules:
+
+1. First identify the given quantities.
+2. Identify what has to be found.
+3. Select the correct Physics concept.
+4. Write the correct formula.
+5. Substitute the values clearly.
+6. Show calculations step-by-step.
+7. Keep units throughout the calculation.
+8. Check the final answer and unit.
+9. Explain the concept briefly and clearly.
+10. Never invent missing values.
+11. If the question is ambiguous, clearly state what information is missing.
+12. Use LaTeX for mathematical expressions.
+
+Use LaTeX like:
+
+$v = u + at$
+
+For displayed equations use:
+
+$$
+v = u + at
+$$
+
+Make the solution easy to understand for a student.
 """
 
     try:
 
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.6-flash",
             contents=prompt
         )
 
@@ -76,7 +98,10 @@ Rules:
 
 
 if __name__ == "__main__":
+
+    port = int(os.environ.get("PORT", 10000))
+
     app.run(
         host="0.0.0.0",
-        port=int(os.environ.get("PORT", 10000))
+        port=port
     )
